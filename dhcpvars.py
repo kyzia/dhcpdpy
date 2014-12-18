@@ -98,9 +98,17 @@ DHCP_OPTIONS = {  0: 'Byte padding',
                  72: 'World Wide Web servers',
                  73: 'Finger servers',
                  74: 'Internet Relay Chat server',
+                 77: 'User Class Data',
                  93: 'System architecture',
                  94: 'Network type',
-                 97: 'UUID',
+                 97: 'UUID/GUID-based Client Identifier',
+                 175: 'encapsulate ipxe',
+                 208: 'pxelinux.magic',
+                 209: 'pxelinux.configfile',
+                 210: 'pxelinux.pathprefix',
+                 211: 'pxelinux.reboottime',
+                 203: 'parentserv',
+                 204: 'parentpath',
                  255: 'End of DHCP options' }
 
 DHCP_DISCOVER = 1
@@ -116,9 +124,18 @@ DHCP_RENEWING = 100
 DHCP_IP_MASK = 1
 DHCP_IP_GATEWAY = 3
 DHCP_IP_DNS = 6
+DHCP_HOSTNAME = 12
+DHCP_DOMAIN = 15
+DHCP_ROOT_PATH = 17
 DHCP_LEASE_TIME = 51
 DHCP_MSG = 53
 DHCP_SERVER = 54
+DHCP_VENDOR_SPECIFIC = 43
+DHCP_PXELINUX_MAGIC = 208
+DHCP_PXELINUX_CONFIGFILE = 209
+DHCP_PXELINUX_PATHPREFIX = 210
+DHCP_PXELINUX_REBOOTTIME = 211
+DHCP_UNASSIGNED = 203
 DHCP_END = 255
 
 PXE_DISCOVERY_CONTROL = 6
