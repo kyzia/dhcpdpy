@@ -1,7 +1,13 @@
+#!/usr/bin/env python                                                                        
+# -*- coding: utf-8 -*-                                                                                                                                                                       
+                                                                                                                                                                                              
 import time
-import socket
+#import socket
 import select
 from binascii import hexlify
+
+from exceptions import *
+from client import Client
 
 from util import hexline, iptoint, inttoip, get_iface_config
 
@@ -9,8 +15,16 @@ from dhcpvars import *
 
 import logging
 
+import subprocess
+import re
+
+
+#import socket
+import pyxapi.socket_ext as socket
+
 (ST_IDLE, ST_PXE, ST_DHCP) = range(3)
 
+IP_RECVORIGDSTADDR = 20
 
 class DHCP:
     def __init__(self, logger):
@@ -22,95 +36,128 @@ class DHCP:
         self.filepool = {}
         self.log = logger
 
+        self.api = Client(url='http://local.domain.ru/api')
+
         #self.log.info('Class initialized')
 
         #Server options
         self.server_config = self.get_srv_params()
 
     def get_srv_params(self):
-        test_server_ip_address = "5.255.210.101"
+        test_server_ip_address = "0.0.0.0"
         test_port = "67"
         return { 'ip_address': test_server_ip_address,
                  'port': int(test_port),
                  'mask': "255.255.255.0"
                 }
 
+    def get_info_from_bash(self, ip_address):
+        #Get info about network from bash script by ip address taken from mongo
+        pass
+        return ya_subr_info
+
     #Function return params for host by mac addr
     def get_host_params(self, mac_str):
         self.log.debug("Client mac is: {0}.".format(mac_str))
 
-        # PXE options
+        # PXE default options
         pxe_filename = 'lpxelinux.0'
         pxe_path = '/var/www/PXE'
-        domain = 'local.ru'
-        test_hostname = None
+        domain = 'domain.ru'
+        pxe_menu_http = 'http://local.domain.ru/PXE/'
+        dns = '8.8.8.8'
+        hostname = None
 
-        if mac_str == "12:12:12:12:12:12":
+        lui = self.api.server_find(query={'mac': mac_str.lower()})
 
-            # Test host options
-            test_hostname = "zverushko3.local.ru"
-            #test_mac = "00:25:90:94:27:cc"
-            test_ip = "100.100.100.101"
-            test_gateway = "100.100.100.254"
-            test_mask = "255.255.255.0"
-            test_dns = '1.1.1.1'
-            test_pxe_menu_http = 'http://local_server/PXE/'
- 
-            self.log.info("Request from {0} host.".format(test_hostname))
+        if not lui:
+            self.log.info("LUI Answer is blank. Skipping.: {0}".format(lui))
+            return False
 
-        if mac_str == "11:11:11:11:11:11":
+        self.log.info("LUI Answer: {0}".format(lui))
 
-            # Test host options
-            test_hostname = "zverushko2.local.ru"
-            #test_mac = "00:25:90:94:27:cc"
-            test_ip = "101.101.101.102"
-            test_gateway = "101.101.101.254"
-            test_mask = "255.255.255.0"
-            test_dns = '1.1.1.1'
-            test_pxe_menu_http = 'http://local_server/PXE/'
- 
-            self.log.info("Request from {0} host.".format(test_hostname))
+        hostname = lui[0]['name']
 
+        try:
+            self.check_hostname(hostname)
+        except Exception:
+            self.log.info("False from check_hostname")
+            return False
 
-        if test_hostname:
-            return { 'hostname': test_hostname,
-                     'ip_address': test_ip,
-                     'gateway': test_gateway,
-                     'mask': test_mask,
-                     'pxe_filename': pxe_filename,
-                     'pxe_path': pxe_path,
-                     'domain': domain,
+        ip_address = socket.gethostbyname(hostname)
+        ya_subr_info = self.get_info_from_yasubr(ip_address)
+
+        # for testing
+        if hostname and mac_str == "00:25:90:94:27:CC":
+            return { 'hostname': str(hostname),
+                     'ip_address': ip_address,
+                     'gateway': ya_subr_info['ya_defrouter'],
+                     'mask': ya_subr_info['ya_netmask'],
+                     'pxe_filename': str(pxe_filename),
+                     'pxe_path': str(pxe_path),
+                     'domain': str(domain),
                      'mac': mac_str,
-                     'dns': test_dns,
-                     'pxe_menu_http': test_pxe_menu_http,
+                     'dns': dns,
+                     'pxe_menu_http': str(pxe_menu_http),
                     }
 
-        self.log.debug("Request from unknown host. Rejecting. Mac is:{0}".format(mac_str))
+        self.log.info("Request from unknown host. Rejecting. Mac is:{0}".format(mac_str))
 
         return False
 
+    def check_hostname(self, hostname):
+        try:
+            socket.getaddrinfo(hostname, 0, socket.AF_UNSPEC)
+        except socket.gaierror as e:
+            # If errno is EAI_NODATA or socket.EAI_NONAME, DNS is alive, but hostname don't exist
+            if e.errno in (socket.EAI_NODATA, socket.EAI_NONAME):
+                raise Exception("Lookup_error", "Failed to lookup {}: {}.", hostname, e)
+#                self.log.info("Lookup_error", "Failed to lookup {}.", hostname)
+            else:
+                raise Exception("Failed to lookup {}: {}.".format(hostname, e))
+#                self.log.info("Failed to lookup {}.".format(hostname))
+
     def bind(self):
-        self.log.info('Binding.')
+        self.log.debug('Binding.')
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.SOL_IP, IP_RECVORIGDSTADDR, 1)
         self.sock_list.append(sock)
         sock.bind((self.server_config['ip_address'], self.server_config['port']))
+
+    def binary_to_ip(self, binary):
+        return inttoip(int(hexlify(binary), 16))
 
     def forever(self):
         while True:
             try:
                 r,w,e = select.select(self.sock_list, [], self.sock_list)
                 for sock in r:
-                    data, req_addr = sock.recvfrom(556)
-                    self.handle(sock, req_addr, data)
-            except KeyError as e:
-#            except Exception as e:
+                    req_addr, data, adata, flags = sock.recvmsg((556,),24)
+
+                    for a in adata:
+                        if a.cmsg_type == IP_RECVORIGDSTADDR:
+                            iph = struct.unpack('!BBBB4s' , adata[0].get()[1])
+                            source_address = socket.inet_ntoa(iph[4])
+                            self.log.debug("Destination address from ancilary data: {0}".format(source_address))
+
+                    self.log.debug("cmsg_data {0}".format(data))
+                    self.log.debug("adata {0}".format(hexlify(adata[0].get()[1])))
+                    self.log.debug("flags {0}".format(flags))
+                    self.handle(sock, req_addr, data[0], source_address)
+            except Exception as e:
 #                self.log.info("Socket buffer now: {0}".format(type(r)))
-#                self.log.info("Exception {0}".format(e))
+                self.log.info("Exception {0}".format(e))
                 time.sleep(1)
 
-    def handle(self, sock, req_addr, data):
+    def eth_addr (self,a) :
+        b = "%.2x:%.2x:%.2x:%.2x:%.2x:%.2x" % (ord(a[0]) , ord(a[1]) , ord(a[2]), ord(a[3]), ord(a[4]) , ord(a[5]))
+        return b
+
+
+    def handle(self, sock, req_addr, data, source_address):
+        self.log.debug("Handle data {0}".format(hexlify(data)))
 
         tail = data[DHCPFormatSize:]
         buf = list(struct.unpack(DHCPFormat, data[:DHCPFormatSize]))
@@ -126,18 +173,20 @@ class DHCP:
 
         # Get all client host params by mac
         host_params = self.get_host_params(mac_str)
-        self.log.debug("Host params: {0}. Mac: {1} ".format(host_params, mac_str))
+        self.log.info("Host info: {0}".format(host_params))
         # If we cannot find host by mac in request - do not reply to client
         if not host_params:
             return
 
+        self.log.info("Host params: {0}. Mac: {1} ".format(host_params, mac_str))
+    
         dhcp_msg_type = self.get_dhcp_type(options)
         state = self.load_data(options, host_params, dhcp_msg_type)
 
         if not state:
             return
 
-        pkt = self.construct_reply(buf, host_params, state, req_addr, options, dhcp_msg_type)
+        pkt = self.construct_reply(buf, host_params, state, req_addr, options, dhcp_msg_type, source_address)
 
         self.answer_to_client(pkt=pkt, req_addr=req_addr, sock=sock)
 
@@ -187,7 +236,7 @@ class DHCP:
 
         return newstate
 
-    def construct_reply(self, buf, host_params, state, req_addr, options, dhcp_msg_type):
+    def construct_reply(self, buf, host_params, state, req_addr, options, dhcp_msg_type, source_address):
 
         buf[BOOTP_OP] = BOOTREPLY
         self.log.info("Client IP: %s" % socket.inet_ntoa(buf[7]))
@@ -210,15 +259,23 @@ class DHCP:
         self.log.info("Reply to: %s:%s" % req_addr)
         self.log.info("Options: {0}".format(options))
 
-        #buf[BOOTP_SIADDR] = buf[BOOTP_GIADDR] = socket.inet_aton(self.server_config['ip_address'])
-        buf[BOOTP_SIADDR] = socket.inet_aton(self.server_config['ip_address'])
+        buf[BOOTP_SIADDR] = socket.inet_aton(source_address)
         self.log.info("req_addr is: {0}".format(req_addr[0]))
         buf[BOOTP_GIADDR] = socket.inet_aton(req_addr[0])
 
         # sname
         buf[BOOTP_SNAME] = '.'.join(['unknown', 'localdomain'])
         # file
-        buf[BOOTP_FILE] = host_params['pxe_filename']
+
+        ipxe_flag = self.is_this_ipxe(options)
+        self.log.info("Ipxe flag: {0}".format(ipxe_flag))
+
+        if self.is_this_ipxe(options):
+            pxe_filename = "http://local.domain.ru/PXE/iboot.ipxe/${mac}"
+        else:
+            pxe_filename = host_params['pxe_filename']
+
+        buf[BOOTP_FILE] = pxe_filename
 
         if not dhcp_msg_type:
             self.log.info("No DHCP message type found, discarding request")
@@ -252,7 +309,8 @@ class DHCP:
         pkt = struct.pack(DHCPFormat, *buf)
         pkt += struct.pack('!BBB', DHCP_MSG, 1, dhcp_reply)
 
-        server = socket.inet_aton(self.server_config['ip_address'])
+#        server = socket.inet_aton(self.server_config['ip_address'])
+        server = socket.inet_aton(source_address)
         pkt += struct.pack('!BB4s', DHCP_SERVER, 4, server)
 
         pkt += struct.pack('!BBI', DHCP_LEASE_TIME, 4, int(str(28800)))
@@ -265,17 +323,20 @@ class DHCP:
 
         dns = socket.inet_aton(host_params['dns'])
         pkt += struct.pack('!BB4s', DHCP_IP_DNS, 4, dns)
+#        pkt += struct.pack('!BB%rs' % len(host_params['hostname']), DHCP_HOSTNAME, len(host_params['hostname']), host_params['hostname'])
+        pkt += struct.pack('!BB%ds' % len(host_params['hostname']), DHCP_HOSTNAME, len(host_params['hostname']), host_params['hostname'])
 
-        pkt += struct.pack('!BB28s', DHCP_HOSTNAME, 28, host_params['hostname'])
+        pkt += struct.pack('!BB%ds' % len(host_params['domain']), DHCP_DOMAIN, len(host_params['domain']), host_params['domain'])
 
-        pkt += struct.pack('!BB9s', DHCP_DOMAIN, 9, host_params['domain'])
-
-        pkt += struct.pack('!BB12s', DHCP_ROOT_PATH, 12, host_params['pxe_path'])
+        pkt += struct.pack('!BB%ds' % len(host_params['pxe_path']), DHCP_ROOT_PATH, len(host_params['pxe_path']), host_params['pxe_path'])
 
         reply_broadcast_ip = socket.inet_aton(inttoip(reply_broadcast))
         pkt += struct.pack('!BB4s', DHCP_BROADCAST_ADDR, 4, reply_broadcast_ip)
 
-        pkt += struct.pack('!BBBB35s', DHCP_VENDOR_SPECIFIC, 37, 210, 35, host_params['pxe_menu_http'])
+        vendor_spec_len = len(host_params['pxe_menu_http'])
+        vendor_spec_len_all = len(host_params['pxe_menu_http']) + 2
+        pkt += struct.pack('!BBBB%ds' % vendor_spec_len, DHCP_VENDOR_SPECIFIC, vendor_spec_len_all, DHCP_PXELINUX_PATHPREFIX,
+                           vendor_spec_len, host_params['pxe_menu_http'])
 
         pkt += struct.pack('!BBI', DHCP_RENEWAL_TIME, 4, int(str(14400)))
 
@@ -298,6 +359,15 @@ class DHCP:
             dhcp_msg_type = None
 
         return dhcp_msg_type
+
+    def is_this_ipxe(self, options):
+        self.log.debug("IPXE option is: {0}".format(options.get(77)))
+        ipxe_option = options.get(77)
+        self.log.debug("IPXE option is: {0}".format(ipxe_option))
+        if ipxe_option == "iPXE":
+            return True
+
+        return False
 
     def answer_to_client(self, pkt, req_addr, sock):
         sock.sendto(pkt, req_addr)
@@ -356,10 +426,11 @@ class DHCP:
         return dhcp_tags  
 
 if __name__ == "__main__":
+#    logging.basicConfig(level=logging.DEBUG)
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger()
 
-    logger.info('Start reading database')
+    logger.debug('Start reading database')
 
     instance = DHCP(logger=logger)
     instance.bind()
