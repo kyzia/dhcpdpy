@@ -186,6 +186,10 @@ class DHCP:
         if not state:
             return
 
+        if req_addr[0] == "0.0.0.0":
+            req_addr=("255.255.255.255", req_addr[1])
+            self.log.info("Answer to broadcast:{0}".format(req_addr))
+
         pkt = self.construct_reply(buf, host_params, state, req_addr, options, dhcp_msg_type, source_address)
 
         self.answer_to_client(pkt=pkt, req_addr=req_addr, sock=sock)
