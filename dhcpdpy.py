@@ -132,7 +132,7 @@ class DHCP:
     def forever(self):
         while True:
             try:
-                r,w,e = select.select(self.sock_list, [], self.sock_list)
+                r,w,e = select.select(self.sock_list, [], self.sock_list, 1)
                 for sock in r:
                     req_addr, data, adata, flags = sock.recvmsg((556,),24)
 
