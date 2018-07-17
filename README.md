@@ -1,10 +1,10 @@
 dhcpdpy
 
-Main code base taken from: https://github.com/eblot/pybootd
+Main code base was taken from: https://github.com/eblot/pybootd
 
 =======
 
-Main concepts:
-- take ip address from mongo db (or other backend) and reply to dhcp request
-- can work over SLB (in different from isc-dhcp-server, udp sendto works from correct interface)
-- not simply - knows about ipxe and pxelinux
+Main features:
+- Takes IP and MAC addresses from MongoDB (or any other backend via http API)
+- Works under Load Balancers unlike isc-dhcp-server (udp sendto is sent from an appropriate interface)
+- Knows about ipxe and pxelinux
